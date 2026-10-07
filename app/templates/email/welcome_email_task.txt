@@ -1,0 +1,143 @@
+=== TASK: WELCOME EMAIL ===
+
+Generate a warm, personalized welcome email thanking a new subscriber for joining Smoothie.
+
+=== AVAILABLE CUSTOMER DATA ===
+
+The application will provide the following customer information at runtime:
+
+* customer_id: Unique identifier (DO NOT include in email)
+* preferred_name: Customer's preferred greeting name. May be empty.
+* first_name: Customer's first name.
+* email: Customer's email address (DO NOT include in email body)
+* plan_name: Customer's subscription plan.
+* signup_date: When the customer subscribed (for context; typically not mentioned in welcome email).
+
+USE IN EMAIL:
+* preferred_name (if not empty), first_name, plan_name
+
+DO NOT USE IN EMAIL:
+* customer_id (internal identifier)
+* email (privacy)
+* signup_date (not relevant for welcome)
+
+Use only the customer information provided at runtime.
+
+Do not invent or assume missing customer information.
+
+=== REQUIREMENTS ===
+
+1. GREETING
+
+* If preferred_name is provided and not empty, use preferred_name.
+* Otherwise, use first_name.
+* Example: "Hi Sarah," or "Hi Alex,"
+
+2. EMAIL CONTENT
+
+* Thank the customer for subscribing to Smoothie.
+* Welcome them to the Smoothie community.
+* Reference their specific subscription plan by name.
+* Explain what they can expect as a Smoothie subscriber.
+* Include a clear but non-pushy call-to-action.
+* Keep the content relevant to a new subscriber.
+
+Do not invent subscription benefits, products, discounts, promotions, services, or policies.
+
+If specific business information is not provided, use only the general information included in the task requirements.
+
+3. STRUCTURE
+
+* Subject: Concise, welcoming, personal, and relevant to the customer.
+* Body: 2-4 clear paragraphs.
+* Signature: Simple closing such as "The Smoothie Team" or "Welcome to Smoothie!"
+
+4. TONE
+
+* Genuine and warm.
+* Friendly and conversational.
+* Professional but not corporate.
+* Encouraging but not pushy.
+* Never manipulative or overly sales-oriented.
+* Make the customer feel welcomed and valued.
+
+5. WELLNESS LANGUAGE
+
+* General wellness language is acceptable.
+* Do not provide medical advice.
+* Do not make claims about treating or curing medical conditions.
+* Do not guarantee health outcomes.
+* Do not assume anything about the customer's health or wellness goals.
+
+=== PERSONALIZATION ===
+
+The following personalization values are allowed:
+
+* preferred_name_used: When preferred_name was used in greeting
+* first_name_used: When first_name was used in greeting
+* plan_name_mentioned: When plan_name was referenced in email body
+
+Only include a value when that personalization was actually used.
+
+Do not create additional personalization categories.
+
+ExamEXAMPLES ===
+
+Example 1: Customer with preferred_name
+
+Input Customer Data:
+* preferred_name: "Sarah"
+* first_name: "Sarah"
+* plan_name: "Premium"
+
+Output:
+{
+  "subject": "Welcome to Smoothie, Sarah!",
+  "body": "Hi Sarah,\n\nThank you for joining Smoothie! We're thrilled to have you as a Premium subscriber.\n\nYou're now part of a vibrant community of health-conscious smoothie lovers. Every week, you'll receive carefully curated recipes, exclusive member offers, and wellness tips delivered straight to your inbox.\n\nAs a Premium member, you get access to our full lineup of premium products. We're excited to support your wellness journey.\n\nReady to get started? Explore this week's offerings and discover what works for you.\n\nWelcome aboard!\nThe Smoothie Team",
+  "personalized_elements": ["preferred_name_used", "plan_name_mentioned"]
+}
+
+Example 2: Customer without preferred_name (empty string)
+
+Input Customer Data:
+* preferred_name: ""
+* first_name: "Alex"
+* plan_name: "Basic"
+
+Output:
+{
+  "subject": "Welcome to Smoothie, Alex!",
+  "body": "Hi Alex,\n\nThank you for subscribing to Smoothie! We're delighted to have you join our community.\n\nWith your Basic subscription, you'll receive weekly emails featuring delicious recipes, member offers, and wellness tips. Our mission is to make healthy living simple and enjoyable.\n\nWe're here to inspire you with new ideas every week. Explore what's available and find what resonates with you.\n\nCheers,\nThe Smoothie Team",
+  "personalized_elements": ["first_name_used", "plan_name_mentioned"]
+}
+
+=== OUTPUT FORMAT ===
+
+Return ONLY a JSON object with no additional text:
+
+{
+  "subject": "Your subject line",
+  "body": "Your email body. Use \\n for line breaks.",
+  "personalized_elements": [
+    "personalization_value_1",
+    "personalization_value_2"
+  ]
+}
+
+=== OUTPUT CONSTRAINTS ===
+
+* Subject: 5-100 characters.
+* Body: 200-5000 characters.
+* Plain text only.
+* No HTML.
+* No Markdown.
+* No placeholder text such as {{variable}} or {variable}.
+* Do not include customer ID.
+* Do not include the customer's email address.
+* Do not include internal application information.
+* Response must contain ONLY the JSON object (no explanation, no markdown, no extra text)
+* No placeholder text such as {{variable}} or {variable}.
+* Do not include customer ID.
+* Do not include the customer's email address.
+* Do not include internal application information.
+* Response must contain ONLY the JSON object.

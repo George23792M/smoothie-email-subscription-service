@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Smoothie Email Subscription Service",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${fileWorkspaceFolder:smoothie-email-subscription-service}/main.py",
+            "cwd": "${fileWorkspaceFolder:smoothie-email-subscription-service}",
+            "python": "${fileWorkspaceFolder:smoothie-email-subscription-service}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "envFile": "${fileWorkspaceFolder:smoothie-email-subscription-service}/.env",
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            }
+        }
+    ]
+}

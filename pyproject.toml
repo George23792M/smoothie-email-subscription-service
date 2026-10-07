@@ -1,0 +1,15 @@
+[project]
+name = "smoothie-email-subscription-service"
+version = "0.1.0"
+description = "AI-powered email subscription service with LangGraph orchestration"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+markers = [
+    "asyncio: marks tests as async (deselect with '-m \"not asyncio\"')",
+]
