@@ -44,3 +44,43 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# ============================================================================
+# MCP REGISTRY INITIALIZATION
+# ============================================================================
+
+
+async def _register_all_services(registry) -> None:
+    """Register all MCP services with the registry."""
+    from app.mcp.config import (
+        get_email_service_replicas,
+        get_customer_service_replicas,
+        get_workflow_service_replicas,
+        get_escalation_service_replicas,
+        get_metrics_service_replicas,
+    )
+
+    services = [
+        ("email_service", get_email_service_replicas()),
+        ("customer_service", get_customer_service_replicas()),
+        ("workflow_service", get_workflow_service_replicas()),
+        ("escalation_service", get_escalation_service_replicas()),
+        ("metrics_service", get_metrics_service_replicas()),
+    ]
+
+    for name, replicas in services:
+        await registry.register_service(name=name, replicas=replicas)
+
+
+async def initialize_mcp_registry() -> None:
+    """
+    Initialize MCPRegistry and register all services.
+
+    Call this during application startup.
+    """
+    from app.mcp.registry import get_registry
+
+    registry = get_registry()
+    await _register_all_services(registry)
+    await registry.start_health_checks()

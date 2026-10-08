@@ -1,9 +1,11 @@
 """
 MCP Client: Thin wrapper around langchain.mcp.MCPAdapter for the
-separately-deployed MCP service.
+separately-deployed MCP service with registry-based routing.
 
-PYTHON CONCEPT: Adapter Wrapper
+PYTHON CONCEPT: Adapter Wrapper + Service Discovery
 - Isolates LangGraph nodes from MCPAdapter connection details
+- Routes to healthy service replicas via MCPRegistry
+- Automatic error tracking for failover
 - One place to change if the transport or tool contract changes
 - Errors from MCP are translated into this app's exception types
 """
@@ -13,42 +15,64 @@ from typing import Any
 
 from langchain.mcp import MCPAdapter
 
-from app.core.config import settings
+from app.mcp.registry import get_registry
 from app.exceptions.service_exception import ServiceException
 from app.exceptions.customer_exception import CustomerNotFoundException
 
 logger = logging.getLogger(__name__)
 
+SERVICE_NAME = "workflow_service"
+
+
+def _get_registry_url() -> str:
+    """Get healthiest MCP service URL from registry."""
+    registry = get_registry()
+    url = registry.get_healthiest(SERVICE_NAME)
+
+    if not url:
+        raise ServiceException(
+            f"No healthy '{SERVICE_NAME}' replicas available in registry"
+        )
+
+    return url
+
 
 async def _call_tool(tool_name: str, arguments: dict[str, Any]) -> Any:
     """
-    Connect to the MCP service, find a tool by name, and invoke it.
+    Call a tool on the MCP service with registry routing and error tracking.
 
     Args:
         tool_name: Name of the tool exposed by the MCP server
         arguments: Keyword arguments to pass to the tool
 
     Returns:
-        The tool's return value (shape depends on the tool)
+        The tool's return value
 
     Raises:
-        ServicException: If the MCP call fails unexpectedly
+        ServiceException: If the MCP call fails
     """
+    registry = get_registry()
+    url = _get_registry_url()
+
     try:
-        async with MCPAdapter(settings.MCP_SERVER_URL) as adapter:
+        async with MCPAdapter(url) as adapter:
             tools = await adapter.list_tools()
             tool = next((t for t in tools if t.name == tool_name), None)
 
             if tool is None:
-                raise ServiceException(f"MCP tool '{tool_name}' not found on sever")
+                raise ServiceException(f"MCP tool '{tool_name}' not found")
 
-            return await tool.ainvoke(arguments)
+            result = await tool.ainvoke(arguments)
+            registry.record_success(SERVICE_NAME, url)
+            return result
 
+    except ServiceException:
+        registry.record_error(SERVICE_NAME, url)
+        raise
     except Exception as ex:
-        logger.error(
-            "MCP tool call failed: %s(%s)", tool_name, arguments, exc_info=True
-        )
-        raise ServiceException(f"MCP server is unavailable") from ex
+        registry.record_error(SERVICE_NAME, url)
+        logger.error(f"MCP tool '{tool_name}' failed", exc_info=True)
+        raise ServiceException(f"MCP server unavailable") from ex
 
 
 async def fetch_customer_details(customer_id: str) -> dict[str, Any]:
