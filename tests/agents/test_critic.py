@@ -438,14 +438,14 @@ class TestJevClient:
         """Successful Jev classification returns correct structure."""
         from app.agents.critic.jev_client import classify_email_with_jev
 
-        # Since typesafe-sdk is not installed, the code falls back to graceful degradation
-        # Returns mock response directly
-        result = await classify_email_with_jev(
-            subject="Welcome",
-            body="Hi there, welcome to Premium smoothies!",
-            deterministic_severity="MODERATE",
-            correlation_id="test-123",
-        )
+        # Mock the SDK as unavailable to test fallback behavior
+        with patch("app.agents.critic.jev_client.TYPESAFE_SDK_AVAILABLE", False):
+            result = await classify_email_with_jev(
+                subject="Welcome",
+                body="Hi there, welcome to Premium smoothies!",
+                deterministic_severity="MODERATE",
+                correlation_id="test-123",
+            )
 
         # When SDK is unavailable, returns fallback response
         assert isinstance(result, dict)
@@ -473,13 +473,14 @@ class TestJevClient:
         """Jev API unavailable → fallback to safe default."""
         from app.agents.critic.jev_client import classify_email_with_jev
 
-        # When SDK is not available, should return graceful fallback
-        result = await classify_email_with_jev(
-            subject="Welcome",
-            body="Hi there, welcome to smoothies!",
-            deterministic_severity="MODERATE",
-            correlation_id="test",
-        )
+        # Mock the SDK as unavailable to test fallback behavior
+        with patch("app.agents.critic.jev_client.TYPESAFE_SDK_AVAILABLE", False):
+            result = await classify_email_with_jev(
+                subject="Welcome",
+                body="Hi there, welcome to smoothies!",
+                deterministic_severity="MODERATE",
+                correlation_id="test",
+            )
 
         # Fallback returns valid decision structure
         assert isinstance(result, dict)

@@ -95,7 +95,11 @@ async def run_email_pipeline(
         final_state = await workflow.ainvoke(initial_state)
 
         # === LOG RESULTS  ====
-        final_email = get_final_email(final_state)
+        # Only get final email if workflow succeeded (has email content)
+        final_email = None
+        if final_state.get("generated_email") or final_state.get("refined_email"):
+            final_email = get_final_email(final_state)
+
         logger.info(
             f"Pipeline completed: {final_state.get('workflow_status')}",
             extra={
