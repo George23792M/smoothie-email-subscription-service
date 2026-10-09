@@ -39,6 +39,29 @@ class Settings(BaseSettings):
     LANGSMITH_PROJECT: str
     LANGSMITH_ENABLED: bool = True
 
+    # FastAPI Server Configuration
+    HOST: str = "127.0.0.1"
+    PORT: int = 8000
+    ENVIRONMENT: str = "development"
+    DEBUG: bool = True
+
+    # CORS Configuration
+    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
+
+    # Database pool aliases for backward compatibility
+    @property
+    def DB_POOL_MIN_SIZE(self) -> int:
+        return self.DB_MIN_POOL_SIZE
+
+    @property
+    def DB_POOL_MAX_SIZE(self) -> int:
+        return self.DB_MAX_POOL_SIZE
+
+    # Database URL property for connection string
+    @property
+    def DATABASE_URL(self) -> str:
+        return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+
     # configuration to load from .env file
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
