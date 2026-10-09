@@ -197,13 +197,14 @@ class BatchExecutionResult:
 # ============================================================================
 
 QUERY_RECENT_NEW_SUBSCRIPTIONS = """
-SELECT DISTINCT c.id AS customer_id
+SELECT c.id AS customer_id
 FROM customers c
 JOIN subscriptions s ON c.id = s.customer_id
 WHERE c.is_active = TRUE
 AND s.status = 'ACTIVE'
 AND s.start_date >= NOW() - INTERVAL '10 minutes'
-ORDER BY s.start_date DESC;
+GROUP BY c.id
+ORDER BY MAX(s.start_date) DESC;
 """
 
 QUERY_EXISTING_WORKFLOW_RUN = """

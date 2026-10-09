@@ -6,12 +6,15 @@ import asyncio
 from app.api import router
 from app.core.config import settings
 from app.services.db_pool import DatabasePool
+from app.core.scheduler import initialize_scheduler, shutdown_scheduler
 from fastapi.responses import JSONResponse
 
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
-# Flag to track if database is available
-_db_initialized = False
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -22,6 +25,8 @@ async def lifespan(app: FastAPI):
     try:
         await asyncio.wait_for(DatabasePool.initalize_pool(), timeout=5.0)
         logger.info("✓ Database pool initialized successfully")
+        await initialize_scheduler()
+        logger.info("Scheduler initialzied successfully")
     except asyncio.TimeoutError:
         logger.warning("⚠ Database initialization timed out after 5 seconds")
         logger.warning(
@@ -34,8 +39,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     try:
+        await shutdown_scheduler()
+        logger.info("Scheduler stopped successfully")
         await DatabasePool.close_pool()
         logger.info("✓ Database pool closed successfully")
+
     except Exception as e:
         logger.error(f"⚠ Error closing database pool: {e}")
 
