@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.workflows import router, get_workflow_service
+from app.api.auth import require_operator
 from app.services.workflow_service import WorkflowService
 from app.dao.workflow_runs_dao import WorkflowRunsDAO
 from app.dao.batch_runs_dao import BatchRunsDAO
@@ -33,6 +34,7 @@ def create_test_app():
     """Create a test FastAPI app with router."""
     app = FastAPI()
     app.include_router(router)
+    app.dependency_overrides[require_operator] = lambda: None
     return app
 
 

@@ -1,0 +1,402 @@
+plan:
+  id: 20261109-welcome-email-redesign
+  title: Replace welcome agent pipeline with bounded template delivery
+  goal: Fetch the active welcome template through PostgreSQL MCP and deliver safely through a provider-neutral bounded pipeline shared by API and scheduler. Retry only classified transient failures on externally verified read-only PostgreSQL calls, and keep delivery fail-closed until external contracts and operational guarantees are verified.
+  created: 2026-11-09
+  status: in_progress
+  context:
+    language: python
+    frameworks: [fastapi, pydantic, mcp, apscheduler]
+    standards: [python, fastapi]
+    build_command: null
+    test_command: '.venv\Scripts\python.exe -m pytest -q'
+    conventions:
+      - Read ~/.copilot/standards/python/coding.md, python/security.md, fastapi/coding.md, and fastapi/security.md before downstream work.
+      - Preserve all pre-existing worktree changes; retain unused files intact and disconnect their welcome-path usage, without commented-out code.
+      - Use typed MCP adapters, existing authenticated workflow routes, small functions under 30 lines, and sanitized structured logs.
+      - The existing PostgreSQL MCP client uses authenticated streamable HTTP, bounded calls, and no blind mutation retries; classify transient read failures without losing uncertain-outcome semantics.
+      - Production router is mounted at /api/api/workflows; health liveness and readiness are separate.
+  assumptions:
+    - "The user approves a provisional local contract: {{first_name}} is the sole placeholder, backed by CustomerDetailResponse.first_name; external template-owner agreement remains a release prerequisite."
+    - "The provisional HTML policy allows only attribute-free p, br, strong, em, ul, ol, and li elements; links, images, URL-bearing attributes, styling, and all other markup are rejected, not sanitized into different content."
+    - "Provisional email MCP request and response shapes are local proposals for fake-based implementation, not evidence that a remote tool or its acceptance semantics exist."
+    - Batch size, concurrency, and provider rate are independently configured; a process-local rate limit requires an operator-enforced single worker and exclusive quota or an externally enforced shared limit.
+    - Both MCP services are external; the proposed template and email tool names, schemas, authentication, deployment, and behavior are not verified.
+    - No dependency lockfile was found; requirements currently declare tenacity>=8.2.0 and mcp>=2.3.0,<3; the service venv has tenacity 9.1.4, mcp 2.3.0, httpx2 2.12.0, and anyio 4.15.1.
+    - The installed Tenacity 9.1.4 exposes AsyncRetrying, retry_if_exception_type, stop_after_attempt, and wait_random_exponential; pin that probed version and verify resolution and actual async behavior before implementation.
+    - The client currently uses httpx2 and AnyIO with MCP streamable HTTP; httpx2 ConnectError alone does not establish a confirmed connection refusal or outage.
+  risks:
+    - External tool contracts, provider acceptance semantics, and a workable claim-reconciliation procedure are release prerequisites; distributed limiting, provider lookup, and idempotency are optional capabilities only if the chosen operational model needs them.
+    - Provider acceptance is not inbox delivery; timeouts, cancellation, process crashes, and failed completion writes can leave ambiguous outcomes that must never be blindly resent.
+    - The existing email_sent API field and stored SENT semantics can be mistaken for inbox delivery; both mean provider acceptance, not confirmed delivery.
+    - Existing worktree contains uncommitted changes including deleted legacy database files; do not restore, delete, overwrite, or revert them.
+    - External PostgreSQL tool implementation and read-only contracts are unverified; proposed template and customer reads must not gain retries until each precise operation is confirmed non-mutating.
+    - No lockfile exists; a fresh installation must resolve the pinned Tenacity version and pass the planned API and async behavior probe, or implementation and deployment are blocked.
+    - Real delivery remains unconditionally disabled in application configuration and operator flows until a subsequent in-scope release decision verifies all external contracts and reconciliation prerequisites; fakes can exercise readiness only through test injection.
+  tasks:
+    - id: T0a
+      title: Classify transient PostgreSQL read failures safely
+      description: Translate only proven transient read failures to a typed exception while preserving other failures and uncertain writes.
+      depends_on: []
+      status: done
+      implementation_notes: "Source implementation completed; dedicated scenario coverage remains for the tester. Existing MCP tests pass."
+      files:
+        - path: app/mcp/postgres_client.py
+          action: edit
+          purpose: Add typed transient read classification for transport and explicit database errors.
+          symbols: [PostgresMCPClient, PostgresMCPError, RetryablePostgresReadError, _is_authorization_error]
+        - path: tests/mcp/test_postgres_client.py
+          action: edit
+          purpose: Verify transient classification, mixed exception groups, cancellation, and sanitized diagnostics.
+      acceptance_criteria:
+        - "For allowlisted verified reads only, translate actual TimeoutError or httpx2.TimeoutException, confirmed connection refusal or other explicitly evidenced network unavailability, and explicit retriable database_unavailable tool results into RetryablePostgresReadError, a PostgresMCPError subtype; generic httpx2.ConnectError, NetworkError, OSError, status, message text, server/tool errors and unknown failures are not proof of unavailability."
+        - "Inspect nested exception groups and typed causes conservatively: cancellation propagates immediately; otherwise any authorization rejection takes precedence; retry only when every leaf is a qualifying transient failure, never for a mixed transient/non-transient group. Preserve only safe causes and sanitized errors without exposing raw exception chains."
+        - "Keep mutation transport failures, timeouts and database_unavailable as unknown_outcome for reconciliation; never retry auth, malformed input or response, generic server/tool failure, unknown failures or cancellation; log only bounded safe operation category, attempt and reason metadata."
+      security_notes:
+        - "A04/A09: conservative classification prevents duplicate mutations; sanitize logs, errors and exception chains exposed to callers."
+      test_scenarios:
+        - {name: timeouts confirmed refusal and database unavailable classify; generic transport and unknown do not, type: unit}
+        - {name: nested homogeneous and mixed groups auth precedence and cancellation, type: security}
+        - {name: invalid data and mutation timeout stay non-retryable with sanitized causes and logs, type: security}
+        - {name: test-only verified timeout and refusal recover; generic and mixed failures do not retry, type: unit}
+        - {name: nested authorization precedence and cancellation propagation, type: security}
+    - id: T0b
+      title: Bound asynchronous read retries with Tenacity
+      description: Add a deadline-aware Tenacity policy for explicitly eligible PostgreSQL reads only.
+      depends_on: [T0a]
+      status: done
+      implementation_notes: "A fresh temporary environment resolved all requirements with Tenacity 9.1.4 and passed the async API/reraise probe. Dedicated scenario coverage remains for the tester."
+      files:
+        - path: app/core/config.py
+          action: edit
+          purpose: Validate conservative PostgreSQL read retry attempt, total budget, and backoff limits.
+        - path: app/mcp/postgres_client.py
+          action: edit
+          purpose: Apply explicit read eligibility and asynchronous deadline-aware retry orchestration.
+          symbols: [PostgresMCPClient, RetryablePostgresReadError]
+        - path: app/services/postgres_workflows.py
+          action: edit
+          purpose: Pass validated retry configuration to the PostgreSQL client.
+        - path: requirements.txt
+          action: edit
+          purpose: Pin the probed Tenacity version consistently with dynamic project dependencies.
+        - path: tests/mcp/test_postgres_client.py
+          action: edit
+          purpose: Verify retry boundaries, backoff, configuration, and exhaustion.
+      acceptance_criteria:
+        - "Pin tenacity==9.1.4 in requirements.txt, the pyproject dynamic dependency source; verify fresh resolution and probe AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_random_exponential, and reraise in that resolved environment. Retry precisely RetryablePostgresReadError on an internally allowlisted, externally verified read-only tool, never caller-asserted or unknown tools."
+        - "Validate finite configuration: default 3 total attempts, 20-second total budget, 0.25-second initial and 2-second maximum jittered exponential backoff; attempts 1-5, budget 1-60 seconds, and positive backoff with initial <= maximum <= budget."
+        - Enforce one monotonic outer deadline covering setup, calls, cleanup and async jittered backoff; cap each attempt by min existing per-call timeout and remaining budget, never start or sleep past the deadline, propagate cancellation, and raise a sanitized transient failure on exhaustion or deadline without returning partial data.
+      security_notes:
+        - "A04/A09/A10: bound attempts, total elapsed time and resource use; preserve authenticated TLS, avoid blocking sleeps, retry storms, sensitive diagnostics, and retries of side effects."
+      test_scenarios:
+        - {name: timeout refusal and database unavailable recover or propagate on exhaustion, type: unit}
+        - {name: resolved Tenacity API async jitter attempts and overall deadline, type: integration}
+        - {name: auth invalid data unknown mixed groups and cancellation never retry, type: security}
+        - {name: database unavailable exhausts attempts and backoff past deadline does not sleep, type: unit}
+        - {name: whole-call deadline and actual jitter timing under controlled clock, type: integration}
+    - id: T0c
+      title: Restrict retry eligibility to verified read contracts
+      description: Wire customer-read retries only after confirming the external tool contract and keep all mutations single-attempt.
+      depends_on: [T0b]
+      status: done
+      implementation_notes: "Verified-read allowlist remains empty; customer reads and mutations execute once. External read-only confirmation remains pending."
+      files:
+        - path: app/services/postgres_workflows.py
+          action: edit
+          purpose: Connect verified customer reads to the internal retry eligibility policy.
+          symbols: [PostgresWorkflows, customer, claim, complete, create_batch, complete_batch]
+        - path: tests/mcp/test_postgres_client.py
+          action: edit
+          purpose: Verify adapter eligibility and no retries for claim, batch, completion, or unknown tools.
+      acceptance_criteria:
+        - Enable get_subscription_customer retry only after external confirmation that the exact tool is read-only; otherwise call once and mark contract verification pending.
+        - Claim, batch creation, batch completion, workflow completion, and unknown tools execute once on timeout or unavailable failures and retain unknown_outcome for reconciliation; never retry the separate email MCP send.
+        - The allowlist remains empty for unverified operations; mutations and email sends have no retries in this scope, even when downtime is confirmed.
+      security_notes:
+        - "A04/A08/A09: avoid duplicate side effects and leaking identifiers; ambiguous mutation outcomes close the existing reconciliation gate."
+      test_scenarios:
+        - {name: verified versus unverified customer read eligibility, type: integration}
+        - {name: mutation and unknown tool timeouts execute once, type: security}
+        - {name: unverified template and customer reads plus all listed mutations time out once; mutation outage is unknown, type: security}
+    - id: T1
+      title: Specify and adapt the template-read contract
+      description: Propose and adapt a typed active-template read without claiming the external tool exists.
+      depends_on: [T0b, T0c]
+      status: done
+      implementation_notes: "Proposed adapter and README contract added; synthetic mock probes passed. Tester-owned coverage and external contract verification remain pending."
+      files:
+        - path: app/services/postgres_workflows.py
+          action: edit
+          purpose: Validate proposed get_active_email_template responses and distinguish absent, invalid, and unavailable results.
+          symbols: [PostgresWorkflows]
+        - path: tests/mcp/test_postgres_client.py
+          action: edit
+          purpose: Exercise proposed tool calls with mocked MCP responses.
+        - path: README.md
+          action: edit
+          purpose: Record the proposed contract and external ownership.
+      acceptance_criteria:
+        - "Propose get_active_email_template with template_name='welcome' and a typed found/not-found response; a found record has bounded subject and HTML body, with identifier and version only if agreed."
+        - Absent, invalid, inactive, ambiguous, or failed responses fail closed without fallback to local or generated content.
+        - Mocked contract tests pass; enable classified transient retry for get_active_email_template only after the actual tool name, read-only behavior, response, and active-selection semantics are externally verified.
+      security_notes:
+        - "A03/A08/A10: validate untrusted MCP payloads and size limits; retain authenticated TLS/loopback transport, timeouts, and sanitized errors."
+      test_scenarios:
+        - {name: valid active and absent template, type: unit}
+        - {name: malformed or ambiguous template and MCP outage, type: security}
+        - {name: proposed found absent inactive extra-field and empty template responses, type: unit}
+    - id: T2
+      title: Render templates deterministically
+      description: Implement the user-approved provisional narrow rendering contract against the actual customer schema.
+      depends_on: [T1]
+      status: done
+      implementation_notes: "Renderer implementation and local boundary smoke checks completed; dedicated security and scenario tests are assigned to the tester."
+      files:
+        - path: app/services/email/welcome_renderer.py
+          action: create
+          purpose: Render fetched welcome templates safely without using the legacy file-based service.
+        - path: tests/services/test_welcome_rendering.py
+          action: create
+          purpose: Cover placeholder validation and output safety.
+      acceptance_criteria:
+        - "Only exact {{first_name}} is recognized in subject and HTML text nodes; reject every other brace, unknown or malformed placeholder, attribute placeholder, missing or empty first_name when used, controls, and values exceeding explicit bounds."
+        - "Reject subject CR/LF and enforce 200-character subject and 65,536-character HTML limits after substitution; HTML-escape first_name as text and validate template markup before substitution."
+        - "Reject malformed or unbalanced markup, comments, declarations, attributes, and every tag except p, br, strong, em, ul, ol, li; no links, images, URL-bearing markup, CSS, scripts, template evaluation, traversal, or network access."
+      security_notes:
+        - "A03/A04: treat both template and customer data as untrusted; restrict placeholders and HTML, escape by context, and bound output."
+      test_scenarios:
+        - {name: first-name placeholders and unused missing values, type: unit}
+        - {name: malformed placeholders controls injection unsafe markup and URL bypasses, type: security}
+        - {name: escaped customer input and post-substitution subject boundary, type: security}
+    - id: T3
+      title: Define provider-neutral acceptance and ambiguity
+      description: Implement a provisional provider-neutral async MCP adapter exercised with fakes while real delivery remains closed.
+      depends_on: []
+      status: done
+      implementation_notes: "Send now handles explicit transport, timeout and ValueError failures only; unexpected errors propagate, cancellation propagates, and invocation always closes the reconciliation gate. Targeted provider and API tests and an injected API-boundary smoke check passed; external contract remains unverified."
+      testing_notes: "2026-11-09 retest: targeted provider and workflow tests 47 passed; full suite 346 passed and 1 existing cross-repository test skipped; syntax compilation passed. Fake-only API injection is not end-to-end delivery. T4-T10 remain incomplete and T11 remains blocked."
+      files:
+        - path: app/mcp/email_client.py
+          action: create
+          purpose: Define typed request and response models and bounded authenticated MCP calls.
+        - path: app/core/config.py
+          action: edit
+          purpose: Configure a separate email MCP endpoint, credential and timeout.
+        - path: app/services/delivery_readiness.py
+          action: edit
+          purpose: Record uncertain provider invocation before the full gate state machine is implemented.
+        - path: tests/services/test_welcome_provider.py
+          action: create
+          purpose: Verify typed mapping and async timeout behavior with fakes.
+      acceptance_criteria:
+        - "Propose send_email arguments {recipient, subject, html_body, correlation_id} and response {status: accepted|rejected|unknown, correlation_id}; reject unexpected fields and mismatched IDs, and document that names, types and semantics are unverified."
+        - "Allow accepted or rejected classification only in injected fakes until external semantics are verified; real responses cannot open the gate or establish acceptance, and timeouts, cancellation after invocation, malformed responses and unexpected failures close the gate for reconciliation without resend; unexpected programming errors propagate."
+        - "Use separately configured authenticated HTTPS transport except loopback, bound the whole async call, and probe the resolved mcp>=2.3.0,<3 ClientSession/streamable API before implementation; preserve the legacy adapter and dependencies."
+      security_notes:
+        - "A02/A09/A10: use separately configured secret credentials, HTTPS except loopback, bounded requests and validated responses; suppress secrets and recipient data in logs and errors."
+      test_scenarios:
+        - {name: provisional fake accepted rejected mismatched and malformed responses, type: unit}
+        - {name: fake MCP authentication timeout cancellation and no resend, type: security}
+        - {name: unexpected programming error propagates through the sanitized API boundary and closes the gate, type: security}
+        - {name: real gate stays closed and fake-only invocation closes after timeout or cancellation, type: security}
+        - {name: post-invocation ValueError and timeout are sanitized and cancellation and programming errors propagate; all block a subsequent send when injected readiness observes reconciliation, type: security}
+        - {name: injected provider RuntimeError reaches the authenticated mounted API as a generic 500 without leaking details and closes reconciliation gate, type: security}
+    - id: T4
+      title: Enforce independent delivery controls
+      description: Add validated batch, concurrency, and time-window controls shared across all welcome entry points.
+      depends_on: [T3]
+      status: in_progress
+      implementation_notes: "Validated process-local controls and a disabled default deployment mode are implemented and smoke-checked; API and scheduler integration remains outstanding in T6, as does tester-owned concurrency coverage."
+      files:
+        - path: app/core/config.py
+          action: edit
+          purpose: Configure conservative independent batch, concurrency, rate, window, and deployment-mode limits.
+        - path: app/services/email/delivery_limits.py
+          action: create
+          purpose: Implement process-local batch, in-flight, and provider-rate controls.
+        - path: tests/services/test_delivery_limits.py
+          action: create
+          purpose: Verify rolling limits and concurrency under simultaneous callers.
+      acceptance_criteria:
+        - Batch size, in-flight sends, and sends per time window are independently bounded across concurrent API and scheduler calls within a process.
+        - Process-local controls are not described as global; deployment requires one operator-enforced worker with exclusive quota or a separately verified shared enforcement mechanism.
+        - Limits are validated, conservative, configurable, and not inferred from the illustrative 100/10/1-minute example.
+      security_notes:
+        - "A04/A05: bound resource use and reject unsafe configuration; distributed enforcement must be atomic and cannot silently fall back locally."
+      test_scenarios:
+        - {name: simultaneous API and scheduler limits, type: integration}
+        - {name: unsafe deployment configuration fails closed, type: security}
+        - {name: process-local concurrency and rolling-window boundary with controlled clock, type: unit}
+        - {name: wired API and scheduler share limits under simultaneous triggers after T6, type: integration}
+    - id: T5
+      title: Define recoverable claim and reconciliation behavior
+      description: Implement conservative claim and uncertainty handling with fake interfaces and no unverified recovery operations.
+      depends_on: [T1, T3]
+      status: pending
+      files:
+        - path: app/services/postgres_workflows.py
+          action: edit
+          purpose: Retain verified claim and completion calls; use recovery operations only if externally confirmed.
+          symbols: [PostgresWorkflows, RegistrationClaim]
+        - path: app/services/workflow_execution.py
+          action: edit
+          purpose: Classify pre-send failure, provider acceptance, uncertain send, and uncertain persistence.
+          symbols: [execute_claim]
+        - path: tests/services/test_workflow_execution.py
+          action: edit
+          purpose: Cover claim ownership and reconciliation outcomes.
+      acceptance_criteria:
+        - Pre-send failure leaves the claim for manual reconciliation and halts new claims; do not call an unverified release or recovery interface.
+        - Unknown claim, send, cancellation after invocation, or completion closes the shared gate, stops new claims and sends, and requires reconciliation; record safe request, worker, batch and correlation identifiers before each side effect and never blindly resend.
+        - "In-flight operations are tracked through closure and reconciled; crash recovery and reopening require externally verified durable identification and an operator-verified clean state, otherwise delivery stays disabled."
+      security_notes:
+        - "A01/A04/A09: validate claim ownership, minimize reconciliation data, avoid blind duplicate sends, and log no customer content or credentials."
+      test_scenarios:
+        - {name: pre-send failure and claim ownership, type: integration}
+        - {name: uncertain send or completion requires reconciliation, type: integration}
+        - {name: cancellation crash recovery and in-flight closure require verified reconciliation, type: security}
+    - id: T6
+      title: Route welcome execution through shared delivery
+      description: Replace graph invocation with the typed template renderer and provider pipeline for both targeted and scheduled claims.
+      depends_on: [T2, T3, T4, T5, T7]
+      status: pending
+      files:
+        - path: app/services/workflow_execution.py
+          action: edit
+          purpose: Centralize preflight, bounded processing, results, and welcome delivery.
+          symbols: [execute_workflow_for_customers, execute_claim]
+        - path: app/core/scheduler.py
+          action: edit
+          purpose: Delegate bounded scheduled processing to the same controls and execution path.
+          symbols: [batch_workflow_job, initialize_scheduler]
+        - path: tests/services/test_workflow_execution.py
+          action: edit
+          purpose: Verify direct delivery and graph disconnection.
+      acceptance_criteria:
+        - In fake-based tests a validated active template is fetched before batch creation or claim; a missing template leaves workflows pending and makes no provider call.
+        - Scheduled and API processing share limits and truthful outcome counts; normal application execution remains blocked before any batch, claim, or send.
+        - No welcome execution invokes the generator, critic, refiner, graph, or legacy email MCP path; preserve all legacy files and existing worktree changes intact.
+      security_notes:
+        - "A03/A04/A09: bound inputs and work, preserve authorization, avoid sensitive logs, and do not retry ambiguous side effects."
+      test_scenarios:
+        - {name: missing template leaves work pending, type: integration}
+        - {name: shared welcome path bypasses graph, type: integration}
+        - {name: preflight runs before any claim or send and production gate cannot be bypassed, type: security}
+    - id: T7
+      title: Make readiness recoverable and truthful
+      description: Implement a testable readiness state machine while keeping real delivery unconditionally closed pending external verification.
+      depends_on: [T1, T4, T5]
+      status: pending
+      files:
+        - path: app/services/delivery_readiness.py
+          action: edit
+          purpose: Evaluate bounded non-mutating checks and a default-closed per-process operator gate.
+          symbols: [is_delivery_ready]
+        - path: main.py
+          action: edit
+          purpose: Expose sanitized readiness and an authenticated operator gate while preserving liveness and lifecycle.
+          symbols: [readiness_check, lifespan]
+        - path: tests/core/test_scheduler.py
+          action: edit
+          purpose: Verify scheduler startup, preflight, and later recovery.
+      acceptance_criteria:
+        - "Normal readiness is 503 and API and scheduler cannot create batches, claim, or send even with configuration or an operator request; no production switch or fake injection may bypass unverified external contracts."
+        - "Exercise the state machine only with injected test fakes: it defaults closed on startup, closes atomically on uncertainty, and requires authenticated operator action, verified prerequisites and documented clean-state reconciliation to reopen."
+        - Scheduler may start while unready and rechecks each run; fake-based tests cover template recovery and closure without restarting, while real readiness checks are bounded, non-mutating, and sanitized.
+      security_notes:
+        - "A01/A05/A09: protect gate operations with existing operator authentication, bound non-mutating probes, fail closed, and expose only sanitized readiness details."
+      test_scenarios:
+        - {name: fake absent template then later recovery, type: integration}
+        - {name: real default closed restart uncertainty and operator bypass denied, type: security}
+        - {name: fake-only clean-state recovery after uncertainty and restart, type: integration}
+    - id: T8
+      title: Expose honest API and batch outcomes
+      description: Preserve authentication and define compatible acceptance and reconciliation reporting without implying inbox delivery.
+      depends_on: [T5, T6, T7]
+      status: pending
+      files:
+        - path: app/api/schemas/responses.py
+          action: edit
+          purpose: Preserve existing response fields and document provider acceptance and reconciliation states.
+        - path: app/api/workflows.py
+          action: edit
+          purpose: Map bounded execution and readiness outcomes to safe API responses.
+        - path: tests/api/test_workflows.py
+          action: edit
+          purpose: Cover authenticated triggers and truthful response states.
+      acceptance_criteria:
+        - In fake-based tests preserve the email_sent boolean and existing response shape; true means simulated provider acceptance, not inbox delivery, even if persistence is uncertain; unknown requires reconciliation and false does not prove no acceptance.
+        - API requests exceeding configured batch capacity are rejected or bounded by documented policy without bypassing the shared limiter.
+        - Public errors are sanitized and existing operator authentication and production route mounting remain intact.
+      security_notes:
+        - "A01/A04/A09: preserve operator authorization, validate request sizes, and avoid disclosing provider errors or personal data."
+      test_scenarios:
+        - {name: accepted versus uncertain response, type: integration}
+        - {name: unauthorized and oversized trigger, type: security}
+        - {name: accepted send with uncertain persistence retains truthful acceptance state, type: integration}
+    - id: T9
+      title: Verify gated lifecycle and fake integration
+      description: Test the actual application lifecycle and proposed contracts with fakes, plus opt-in non-sending external checks.
+      depends_on: [T3, T6, T7, T8]
+      status: pending
+      files:
+        - path: tests/api/test_application_security.py
+          action: edit
+          purpose: Exercise real application mount, readiness, lifecycle, and security behavior.
+        - path: tests/mcp/test_postgres_protocol.py
+          action: edit
+          purpose: Add opt-in external template contract verification without assuming tool availability.
+      acceptance_criteria:
+        - Mocked unit and integration tests cover read timeout, confirmed refusal, database unavailable, auth, invalid data, unknown and mixed groups, cancellation, backoff and deadline, exhaustion, mutation timeout no-retry, invalid templates, concurrent triggers, restart gates, reconciliation, and completion failure without real email.
+        - Application-level tests cover actual mounted routes, liveness, readiness, and scheduler lifecycle.
+        - External contract checks are opt-in, non-sending, and never enable delivery or imply full production verification; report unavailable checks as unverified and run the service venv test command.
+      security_notes:
+        - "A04/A09: use synthetic test data and fake credentials, never send real email or expose secrets in test output."
+      test_scenarios:
+        - {name: provider cancellation and ambiguous persistence, type: integration}
+        - {name: actual app readiness and authenticated route, type: security}
+        - {name: supplied MCP template contract, type: integration}
+        - {name: complete lifecycle with no real email and externally unverified checks explicitly reported, type: security}
+    - id: T10
+      title: Document operation and external dependencies
+      description: Document provisional contracts, actual safeguards, reconciliation requirements, and release gates without claiming unimplemented functionality.
+      depends_on: [T0b, T0c, T1, T4, T5, T7, T8, T9]
+      status: pending
+      files:
+        - path: README.md
+          action: edit
+          purpose: Update setup, template contract, limits, readiness, acceptance semantics, and operator runbook.
+      acceptance_criteria:
+        - "Document the locally approved provisional {{first_name}}-only syntax, text-only substitution, strict rejection, no-link/no-URL-attribute HTML policy, size bounds, and external agreement needed for release."
+        - Document proposed versus verified MCP tool names, typed contracts, authentication, deployment, acceptance, timeout, idempotency and error semantics; distinguish release prerequisites from optional capabilities.
+        - Document retry classification and defaults, pinned dependency and probe, overall versus per-attempt timeout, eligible verified reads, exhaustion, no mutation or email retry, provider-acceptance meaning of email_sent, restart gate and reconciliation, and test commands.
+      security_notes:
+        - "A05/A09: document least-privilege credentials, safe logging, operational access, and fail-closed deployment defaults."
+      test_scenarios:
+        - {name: documented setup and failure runbook review, type: integration}
+        - {name: document process-local enforcement and truthful provider acceptance limits, type: integration}
+    - id: T11
+      title: Verify release prerequisites
+      description: Keep actual delivery blocked until externally owned contracts and a safe operational recovery model are evidenced.
+      depends_on: [T9, T10]
+      status: blocked
+      blocked_reason: "External template and email MCP contracts, acceptance semantics, and a workable durable reconciliation procedure do not yet exist or are unverified; fake tests cannot establish them."
+      files:
+        - path: README.md
+          action: edit
+          purpose: Record verification evidence and the operator-approved release checklist when available.
+      acceptance_criteria:
+        - "External owners confirm the template tool's exact active-selection/read-only contract and approve the provisional template, HTML and URL policy; keep read retries disabled unless each exact operation is verified read-only."
+        - "External owners verify the email tool request/response, authenticated transport, definite acceptance and rejection semantics, and handling of ambiguous outcomes; no real send or release is authorized by this task alone."
+        - "Operators verify durable identification and reconciliation of unresolved claims, sends and completion writes across crashes, and enforce a single worker with exclusive quota or an independently verified shared limit; absent evidence, the production gate remains closed."
+      security_notes:
+        - "A04/A08/A09: preserve default-deny delivery, prevent duplicate irreversible sends, and keep evidence and reconciliation logs free of credentials and customer content."
+      test_scenarios:
+        - {name: missing external evidence cannot open real gate, type: security}
+        - {name: non-sending verification evidence review, type: integration}
+        - {name: absent durable reconciliation or external contracts prevents production release, type: security}
+  out_of_scope:
+    - Changes to either external MCP service, database migrations, registration, template-generation/critique/refinement service, or any other repository.
+    - Resend SDK adapter or dependency changes; preserve legacy unused files intact and disconnected without commented-out code.
+    - Claiming confirmed inbox delivery, implementing unverified distributed guarantees, or deleting/commenting out unused legacy files.

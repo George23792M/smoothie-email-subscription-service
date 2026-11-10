@@ -1,0 +1,104 @@
+plan:
+  id: 20261110-disable-agent-execution
+  title: Remove the active agent execution path
+  goal: Disconnect runtime agent execution while keeping all delivery and workflow claiming disabled. Implement template retrieval and sending in a later, separately verified integration.
+  created: 2026-11-10
+  status: done
+  context:
+    language: python
+    frameworks: [fastapi]
+    standards: [python, fastapi]
+    build_command: null
+    test_command: '.venv\Scripts\python.exe -m pytest -q'
+    conventions:
+      - Keep router-service-adapter layering, typed async interfaces, small functions under 30 lines, and sanitized errors.
+      - Preserve unrelated dirty worktree changes and pre-existing deletions; never comment out code.
+      - Preserve legacy agent and graph files and their tests unless a change is strictly required.
+  assumptions:
+    - This service owns API and scheduler execution; PostgreSQL MCP owns persistence and a separate email MCP service owns delivery.
+    - The existing 20261109 welcome-email redesign remains in progress; this plan does not complete or alter it.
+    - The previously approved provisional welcome contract and fake-only components remain isolated; external owner agreement, provider semantics and reconciliation are release prerequisites, not verified here.
+    - No new dependency or version-sensitive library API is needed.
+  risks:
+    - Readiness can be mocked or changed; disabled execution must not acquire claims or depend solely on that predicate.
+    - Provider acceptance is not inbox delivery; no delivery or release integration is established by this plan.
+  tasks:
+    - id: T1
+      title: Disconnect graph execution and block direct claims
+      description: Remove the active graph import and execution path and make targeted and direct claim execution unconditionally unavailable without adapter or outbound side effects.
+      depends_on: []
+      status: done
+      files:
+        - path: app/services/workflow_execution.py
+          action: edit
+          purpose: Reject execution before acquiring an adapter or touching a supplied claim, independently of readiness.
+          symbols: [require_delivery_ready, execute_workflow_for_customers, execute_claim]
+        - path: tests/services/test_workflow_execution.py
+          action: edit
+          purpose: Replace only conflicting active-execution expectations and retain independent result tests.
+      acceptance_criteria:
+        - Targeted execution raises DeliveryUnavailableError before adapter acquisition or claim for both false and mocked true readiness.
+        - Direct execute_claim raises DeliveryUnavailableError for false and mocked true readiness without customer lookup, any adapter operation, template fetch, email send, graph invocation, completion, or success result.
+        - Runtime execution imports no graph or agent path; no template, send, or claim logic is introduced and unrelated legacy tests remain intact.
+      security_notes:
+        - "OWASP A01/A04: enforce the disabled boundary independently of readiness and prevent unauthorized or accidental customer, database, and email side effects."
+      test_scenarios:
+        - {name: targeted execution rejects both readiness states before adapter acquisition, type: unit, expected: unavailable and zero adapter calls}
+        - {name: direct claim rejects both readiness states, type: security, expected: unavailable and zero data graph template or email calls}
+        - {name: execution module has no active graph or agent dependency, type: unit, expected: no runtime graph import}
+        - {name: untouched supplied claim and adapter under both readiness states, type: security, expected: unavailable before any attribute access}
+        - {name: clean production process imports and executes disabled paths, type: integration, expected: no graph or agent import attempted}
+    - id: T2
+      title: Keep scheduler unconditionally disabled
+      description: Disable scheduler startup and direct batch invocation before batch creation or claims regardless of readiness while retaining safe shutdown.
+      depends_on: [T1]
+      status: done
+      files:
+        - path: app/core/scheduler.py
+          action: edit
+          purpose: Remove active batch and claim processing from the disabled scheduler path.
+          symbols: [initialize_scheduler, batch_workflow_job, shutdown_scheduler]
+        - path: tests/core/test_scheduler.py
+          action: edit
+          purpose: Replace only conflicting active-processing expectations with disabled-path regressions.
+      acceptance_criteria:
+        - Startup registers and starts no scheduler job and direct batch invocation creates no adapter, batch, or claim with readiness false or mocked true.
+        - Scheduler shutdown remains safe for both stopped and already-running instances; no graph, template, or send path is invoked.
+      security_notes:
+        - "OWASP A04: fail closed before scheduler data mutations or outbound delivery, including direct job invocation."
+      test_scenarios:
+        - {name: scheduler startup and direct job under both readiness states, type: unit, expected: no job start adapter batch or claim}
+        - {name: scheduler shutdown lifecycle, type: unit, expected: running scheduler stops and stopped scheduler is safe}
+        - {name: real application lifespan and direct batch invocation, type: integration, expected: safe startup and shutdown without database or legacy graph}
+    - id: T3
+      title: Verify API closure and document disabled execution
+      description: Verify the production API and readiness response remain honest and document the removed runtime path and future integration boundary.
+      depends_on: [T1, T2]
+      status: done
+      files:
+        - path: main.py
+          action: edit
+          purpose: Remove misleading active-agent description and keep delivery readiness unavailable while execution is disabled.
+          symbols: [readiness_check]
+        - path: tests/api/test_application_security.py
+          action: edit
+          purpose: Cover authenticated production trigger and readiness with a mocked true delivery predicate.
+        - path: README.md
+          action: edit
+          purpose: Explain disabled execution, retained legacy files, future integration, and unverified release prerequisites.
+      acceptance_criteria:
+        - Authenticated POST /api/api/workflows/trigger returns 503 before adapter or claim acquisition with false and mocked true readiness; authorization and input validation remain intact.
+        - With a healthy fake database and mocked true delivery predicate, /health/ready still reports email unavailable and HTTP 503; /health remains liveness.
+        - README states no runtime graph, claims, template fetch, or email send occur; separate provider acceptance is not inbox delivery and future external contracts and reconciliation remain unverified.
+      security_notes:
+        - "OWASP A01/A05: preserve operator authentication, request validation, sanitized errors, and fail-closed trigger and readiness reporting."
+      test_scenarios:
+        - {name: authenticated production trigger with both readiness states, type: integration, expected: 503 and no adapter or claim}
+        - {name: healthy database with mocked ready delivery, type: integration, expected: readiness 503 and email unavailable}
+        - {name: unauthorized and invalid trigger requests, type: security, expected: existing 401 and 422 behavior}
+        - {name: injection empty oversized and unsupported trigger inputs, type: security, expected: 422 without adapter acquisition}
+        - {name: liveness and known or unexpected database readiness failures, type: integration, expected: liveness succeeds known failures return sanitized 503 and programming errors propagate}
+        - {name: real database transport deadline versus caller cancellation, type: integration, expected: timeout returns 503 cancellation propagates and neither retries}
+  out_of_scope:
+    - Implementing template fetch, sending, real delivery, automatic claim recovery, external service contracts, or a release decision.
+    - Deleting or commenting out legacy agents, graph files, or unrelated tests.

@@ -1,0 +1,16 @@
+{
+	"mcpServers": {
+		"jevgrep": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"-y",
+				"@nassim-arifette/jevgrep",
+				"mcp"
+			],
+			"tools": [
+				"*"
+			]
+		}
+	}
+}

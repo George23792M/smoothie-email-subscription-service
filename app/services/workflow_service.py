@@ -11,6 +11,7 @@ from app.dao.workflow_runs_dao import WorkflowRunsDAO
 from app.dao.batch_runs_dao import BatchRunsDAO
 from app.api.schemas.responses import WorkflowHistoryItem, BatchRunItem
 from app.exceptions.database_exception import DatabaseExecutionException
+from app.mcp.postgres_client import PostgresMCPError
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class WorkflowService:
         """
         try:
             logger.info(
-                f"Fetching workflow history for customer {customer_id}",
+                "Fetching workflow history",
                 extra={"workflow_type": workflow_type, "limit": limit},
             )
 
@@ -68,7 +69,7 @@ class WorkflowService:
 
             if not rows:
                 logger.info(
-                    f"No workflow history found for customer {customer_id}",
+                    "No workflow history found",
                     extra={"workflow_type": workflow_type},
                 )
                 return []
@@ -82,9 +83,9 @@ class WorkflowService:
                     status=row["status"],
                     email_status=row["email_status"],
                     attempt_count=row["attempt_count"],
-                    started_at=row["started_at"].isoformat(),
+                    started_at=_timestamp(row["started_at"]),
                     completed_at=(
-                        row["completed_at"].isoformat() if row["completed_at"] else None
+                        _timestamp(row["completed_at"]) if row["completed_at"] else None
                     ),
                     error_message=row["validation_errors"],
                 )
@@ -93,20 +94,17 @@ class WorkflowService:
 
             logger.info(
                 f"Found {len(history_items)} workflow history items",
-                extra={"customer_id": customer_id},
             )
             return history_items
 
-        except DatabaseExecutionException:
+        except (DatabaseExecutionException, PostgresMCPError):
             raise
         except Exception as ex:
             logger.error(
                 "Unexpected error fetching workflow history",
-                exc_info=True,
-                extra={"customer_id": customer_id},
             )
             raise DatabaseExecutionException(
-                f"Failed to fetch workflow history: {str(ex)}"
+                "Failed to fetch workflow history"
             ) from ex
 
     async def get_batch_status(self, limit: int = 10) -> list[BatchRunItem]:
@@ -142,9 +140,9 @@ class WorkflowService:
                     successful_count=row["successful_count"],
                     failed_count=row["failed_count"],
                     skipped_count=row["skipped_count"],
-                    started_at=row["started_at"].isoformat(),
+                    started_at=_timestamp(row["started_at"]),
                     completed_at=(
-                        row["completed_at"].isoformat() if row["completed_at"] else None
+                        _timestamp(row["completed_at"]) if row["completed_at"] else None
                     ),
                     error_message=row["error_message"],
                 )
@@ -154,17 +152,27 @@ class WorkflowService:
             logger.info(f"Found {len(batch_items)} batch run items")
             return batch_items
 
-        except DatabaseExecutionException:
+        except (DatabaseExecutionException, PostgresMCPError):
             raise
         except Exception as ex:
             logger.error(
                 "Unexpected error fetching batch status",
-                exc_info=True,
                 extra={"limit": limit},
             )
             raise DatabaseExecutionException(
-                f"Failed to fetch batch status: {str(ex)}"
+                "Failed to fetch batch status"
             ) from ex
 
 
 __all__ = ["WorkflowService"]
+
+
+def _timestamp(value: object) -> str:
+    """Normalize MCP timestamp strings and datetime objects."""
+    if isinstance(value, str):
+        return value
+    from datetime import datetime
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raise ValueError("Invalid timestamp in MCP response")

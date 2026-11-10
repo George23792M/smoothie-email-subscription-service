@@ -1,13 +1,4 @@
 {
   "servers": {
-    "jevgrep": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@nassim-arifette/jevgrep",
-        "mcp"
-      ],
-      "env": {}
-    }
   }
 }

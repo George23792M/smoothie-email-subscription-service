@@ -3,8 +3,18 @@ name = "smoothie-email-subscription-service"
 version = "0.1.0"
 description = "AI-powered email subscription service with LangGraph orchestration"
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = []
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
